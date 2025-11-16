@@ -1,0 +1,54 @@
+Metadata-Version: 2.4
+Name: pyerasure
+Version: 1.3.0
+Summary: A tool for learning erasure codes
+Home-page: https://github.com/steinwurf/
+Author: Steinwurf ApS
+Author-email: contact@steinwurf.com
+License: PyErasure Research License 1.2 / Evaluation License 1.3
+Keywords: pyerasure,erasure,coding,reed-solomon,rlnc,network coding
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Topic :: Communications
+Classifier: Topic :: Education
+Description-Content-Type: text/x-md
+License-File: LICENSE.rst
+License-File: LICENSE_EVALUATION.rst
+License-File: LICENSE_RESEARCH.rst
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: keywords
+Dynamic: license
+Dynamic: license-file
+Dynamic: summary
+
+# SlidingWindowPyRLNC
+An implementation of a sliding window RLNC protocol based on Steinwurf's PyErasure module written in Python.
+
+Introduction
+============
+
+This is a slightly restructured module supporting both the original block-based implementation and the sliding window one. To the best of our knowledge, the sliding window implementation is stable, although it can be more efficient (regarding memory management). Before using this repository, one must obtain a Steinwurf ApS research license first (see https://www.steinwurf.com/license/). For the documentation of the original block-based PyErasure implementation, please visit https://pyerasure.pages.dev/1.3.0/.
+
+Main features of this version:
+--------------------
+1. Block-based RLNC as provided by Steinwurf (in  folder ``src/pyerasure/block``).
+2. Decoding Matrix Management in SW Version: In order to improve decoder's performance and eliminate the number of operations over the finite field, we propose some enhancements aiming to reduce the size of the active decoding matrix. These enhancements refer to when the lower decoding window bound (min index) should be updated. We provide a final implementation containing the following enhancements regarding the update of the decoding window:
+
+      The decoder dynamically updates the decoding window contents even before reaching the upper bound based on the packet type. If source packets are DECODED, they can be safely eliminated from the decoding window when the difference of the window’s bounds (max_index – min_index) exceeds the coding window size. This means, that this DECODED packet will not be included in any further coded packet received at the decoder side, hence it can be safely removed from the decoding window. This only refers to the amount of time the decoder should keep the information of the decoded packets in its buffer. If the decoded packet is received in-order, it can be delivered to the application directly. We also remove MISSING packets from the decoding window if they fall beyond the actual coding window size, as no further coded packets will contain information for them in the future. Hence, they can be safely removed from the decoding window. However, if any PARTIALLY_DECODED packet is preceding the MISSING one, we can safely remove the PARTIALLY_DECODED packets as well, since they either rely on the MISSING packet to be recovered or to other packets in the range (PARTIALLY_DECODED, MISSING) which will not be recovered anyways in the future. Hence, we can safely remove even these PARTIALLY_DECODED packets. However, the general rule for PARTIALLY_DECODED packets is that they stay in the decoding window as long as max_index – min_index < decoding window size.
+
+
+Installation & Usage
+--------------------
+
+For more information on how to run a simulation script please see [*here*](guidelines.md).
