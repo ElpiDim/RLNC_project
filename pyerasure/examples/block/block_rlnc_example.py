@@ -107,6 +107,8 @@ def main():
 
         #se poio timeslot eginei h apokwdikopoihsh tou block
         block_completion_slot = None
+#flag gia xameno systematic - an xathei systematic ta ypoloipa den mporoun ana paradothoun amesa in order.
+        gap_started  = False
 
         # Systematic packets
         for index in range(encoder.rank):
@@ -124,9 +126,17 @@ def main():
             if random.uniform(0, 100) >= loss_probability:
                 decoder.decode_systematic_symbol(symbol, index)
 
+                # Αν ΔΕΝ έχει ξεκινήσει ακόμη "κενό" στο block (δεν έχει χαθεί προηγούμενο),
+                # τότε αυτό το packet μπορεί να παραδοθεί άμεσα στην εφαρμογή (delay = 0).
+                if not gap_started and deliver_slots[global_index] is None:
+                    deliver_slots[global_index] = elapsed_timeslots
+                    delivered_packets += 1
+
                 #check gt Μporei na oloklhrwthike mono me systematic (xwris kan na steiloume coded) epeidh de xathike kanena
                 if decoder.is_complete() and block_completion_slot is None:
                     block_completion_slot = elapsed_timeslots
+                else:
+                    gap_Started =True
 
         # Coded packets
         for r in range(coded_packets_per_block):
@@ -141,7 +151,7 @@ def main():
                 if decoder.is_complete() and block_completion_slot is None:
                     block_completion_slot = elapsed_timeslots
 
-        # an ena block ginetai decode ola ta symbols tou einai delivered
+        # an ena block ginetai decode leme ta symbols tou einai delivered
         if block_completion_slot is not None:
             for local_index in range(current_block_size):
                 global_index = block_first_symbol + local_index
@@ -160,14 +170,23 @@ def main():
     print(f"Elapsed timeslots: \t\t{elapsed_timeslots}")
     print(f"Total elapsed time: \t\t{end - start} sec")
 
-    # Delivery ratio
+    # 1. Delivery ratio
     if total_source_packets > 0:
         delivery_ratio = delivered_packets / total_source_packets
     else:
         delivery_ratio = 0.0
-
     print(f"Delivery ratio (source delivered / source sent): \t{delivery_ratio:.3f}")
 
+    #2. en seira kathusterhsh
+    delays = []
+    for i in range(total_source_packets):
+        if send_slots[i] is not None and deliver_slots[i] is not None:
+            delays.append(deliver_slots[i] - send_slots[i])
+    if len(delays)>0:
+        avg_delay = sum(delays) / len(delays)
+    else:
+        avg_delay = 0.0
 
+    print(f"Average in-order delivery delay per source pacjet (slots): \t{avg_delay:.3f}")
 if __name__ == "__main__":
     main()
