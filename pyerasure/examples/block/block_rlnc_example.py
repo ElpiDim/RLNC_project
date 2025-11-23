@@ -126,8 +126,7 @@ def main():
             if random.uniform(0, 100) >= loss_probability:
                 decoder.decode_systematic_symbol(symbol, index)
 
-                # Αν ΔΕΝ έχει ξεκινήσει ακόμη "κενό" στο block (δεν έχει χαθεί προηγούμενο),
-                # τότε αυτό το packet μπορεί να παραδοθεί άμεσα στην εφαρμογή (delay = 0).
+                #an den exei xathei proigoumeno packet tote mporei auto n aparadothei amesa delay = 0
                 if not gap_started and deliver_slots[global_index] is None:
                     deliver_slots[global_index] = elapsed_timeslots
                     delivered_packets += 1
@@ -135,8 +134,8 @@ def main():
                 #check gt Μporei na oloklhrwthike mono me systematic (xwris kan na steiloume coded) epeidh de xathike kanena
                 if decoder.is_complete() and block_completion_slot is None:
                     block_completion_slot = elapsed_timeslots
-                else:
-                    gap_Started =True
+            else:
+                gap_started =True
 
         # Coded packets
         for r in range(coded_packets_per_block):
