@@ -69,6 +69,9 @@ def main():
     deliver_slots = [None] * total_source_packets  # σε ποιο timeslot egine delivered (decoded) ena paketo
     delivered_packets = 0  # posa source packets paradothikan
 
+    # flag gia to an ena source packet eftase (san systematic) ston paralipti
+    received_sys = [False] * total_source_packets
+
     global_symbol_index = 0  # index tou prwtou simvolou tou block
 
     start = time.time()
@@ -76,7 +79,6 @@ def main():
         if offset >= len(data_in):
             break
         # maybe use memoryview instead, check if error occurs with indexing
-
 
         block_data = data_in[offset:offset + block_size * symbol_bytes]
         offset += block_size * symbol_bytes
@@ -107,7 +109,7 @@ def main():
 
         #se poio timeslot eginei h apokwdikopoihsh tou block
         block_completion_slot = None
-#flag gia xameno systematic - an xathei systematic ta ypoloipa den mporoun ana paradothoun amesa in order.
+        #flag gia xameno systematic - an xathei systematic ta ypoloipa den mporoun ana paradothoun amesa in order.
         gap_started  = False
 
         # Systematic packets
@@ -122,9 +124,11 @@ def main():
             if send_slots[global_index] is None:
                 send_slots[global_index] = elapsed_timeslots
 
-
             if random.uniform(0, 100) >= loss_probability:
                 decoder.decode_systematic_symbol(symbol, index)
+
+                # kratame oti auto to source eftase (san systematic) ston paralipti
+                received_sys[global_index] = True
 
                 #an den exei xathei proigoumeno packet tote mporei auto n aparadothei amesa delay = 0
                 if not gap_started and deliver_slots[global_index] is None:
@@ -135,7 +139,7 @@ def main():
                 if decoder.is_complete() and block_completion_slot is None:
                     block_completion_slot = elapsed_timeslots
             else:
-                gap_started =True
+                gap_started = True
 
         # Coded packets
         for r in range(coded_packets_per_block):
@@ -156,6 +160,15 @@ def main():
                 global_index = block_first_symbol + local_index
                 if deliver_slots[global_index] is None:
                     deliver_slots[global_index] = block_completion_slot
+                    delivered_packets += 1
+        else:
+            # periptwsi opou TO block DEN mporei na apokwdikopoih8ei
+            # alla exoume labei kapoia endiamesa source packets (received_sys = True)
+            block_end_slot = elapsed_timeslots
+            for local_index in range(current_block_size):
+                global_index = block_first_symbol + local_index
+                if received_sys[global_index] and deliver_slots[global_index] is None:
+                    deliver_slots[global_index] = block_end_slot
                     delivered_packets += 1
 
         # next block
@@ -186,6 +199,7 @@ def main():
     else:
         avg_delay = 0.0
 
-    print(f"Average in-order delivery delay per source pacjet (slots): \t{avg_delay:.3f}")
+    print(f"Average in-order delivery delay per source packet (slots): \t{avg_delay:.3f}")
+
 if __name__ == "__main__":
     main()
