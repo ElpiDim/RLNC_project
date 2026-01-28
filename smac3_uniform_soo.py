@@ -18,7 +18,10 @@ import time
 import faulthandler
 import logging
 
-import pyerasure.sw as pysw
+# --- CHANGED: use SWEncoder / SWDecoder like Optuna ---
+from pyerasure.sw.swencoder import SWEncoder
+from pyerasure.sw.swdecoder import SWDecoder
+
 import pyerasure.finite_field
 import pyerasure.sw.generator as pygenerator
 
@@ -62,28 +65,34 @@ def run_simulation(r, d, extraparams):
     source_per_cycle = code_rate[0]
     repair_per_cycle = code_rate[1] - code_rate[0]
     source_plus_repair = code_rate[1]
-    rng_loss = random.Random(seed + 1000)
 
-    encoder = pysw.Encoder(field, num_packets, packet_size, coding_depth, source_per_cycle, repair_per_cycle)
-    decoding_depth = coding_depth
-    decoder = pysw.Decoder(field, num_packets, packet_size, coding_depth, source_per_cycle, decoding_depth)
+    rng_loss = random.Random(seed + 1000)  # generator for channel losses
+
+    # --- CHANGED: SWEncoder/SWDecoder (same style as Optuna) ---
+    encoder = SWEncoder(field, num_packets, packet_size, coding_depth, source_per_cycle, repair_per_cycle)
+    decoding_depth = coding_depth  # assume CW = DW
+    decoder = SWDecoder(field, num_packets, packet_size, coding_depth, source_per_cycle, decoding_depth)
 
     generator = pygenerator.RandomUniform(field, encoder.packets)
     generator.set_seed(seed + 2000)
 
+    # Initialize data buffer (feed per packet using set_packet)
     data_in = bytearray(random.Random(seed).getrandbits(8) for _ in range(num_packets * packet_size))
-    encoder.set_packets(data_in)
 
     source_packet_counter = 0
     transmitted_packets = 0
     packets_sent = 0
     elapsed_timeslots = -1
 
+    # Systematic packets + periodic repairs
     for index in range(num_packets):
         source_packet_counter += 1
+
+        offset = index * encoder.packet_size_bytes
+        encoder.set_packet(index, data_in[offset: offset + encoder.packet_size_bytes])
         packet = encoder.packet_data(index)
+
         transmitted_packets += 1
-        encoder.update_coding_window(index)
         elapsed_timeslots += 1
 
         decoder.update_timestamps(index, elapsed_timeslots)
@@ -91,15 +100,15 @@ def run_simulation(r, d, extraparams):
         if rng_loss.uniform(0, 1) >= ploss:
             decoder.current_timeslot = elapsed_timeslots
             decoder.decode_systematic_packet(packet, index)
+
         packets_sent += 1
 
+        # send |repair_per_cycle| repair packets every |source_per_cycle| source ones
         if source_packet_counter % encoder.source_per_cycle == 0:
             for _ in range(encoder.repair_per_cycle):
-                non_zero_coefficients = generator.generate_partial(encoder.calculate_num_coefficients())
-                zeros_before = bytearray(encoder.coding_window_start)
-                zeros_after = bytearray(num_packets - encoder.coding_window_end)
-                coefficients = zeros_before + non_zero_coefficients + zeros_after
+                coefficients = generator.generate_partial(encoder.calculate_num_coefficients())
                 packet = encoder.encode_packet(coefficients)
+
                 elapsed_timeslots += 1
 
                 if rng_loss.uniform(0, 1) >= ploss:
@@ -110,6 +119,7 @@ def run_simulation(r, d, extraparams):
                         (encoder.coding_window_start, encoder.coding_window_end - 1),
                     )
 
+    # repairs at the end
     repair_at_the_end = math.ceil(
         (num_packets * source_plus_repair / source_per_cycle)
         - num_packets
@@ -117,11 +127,9 @@ def run_simulation(r, d, extraparams):
     )
 
     for _ in range(repair_at_the_end):
-        non_zero_coefficients = generator.generate_partial(encoder.calculate_num_coefficients())
-        zeros_before = bytearray(encoder.coding_window_start)
-        zeros_after = bytearray(num_packets - encoder.coding_window_end)
-        coefficients = zeros_before + non_zero_coefficients + zeros_after
+        coefficients = generator.generate_partial(encoder.calculate_num_coefficients())
         packet = encoder.encode_packet(coefficients)
+
         elapsed_timeslots += 1
 
         if rng_loss.uniform(0, 1) >= ploss:
@@ -138,7 +146,6 @@ def run_simulation(r, d, extraparams):
     assert packets_sent == transmitted_packets
 
     delivery_ratio = decoder.delivered_packets / transmitted_packets if transmitted_packets else 0.0
-
     if decoder.delivered_packets > 0:
         avg_inorder_delay = decoder.sum_of_delay / decoder.delivered_packets
     else:
