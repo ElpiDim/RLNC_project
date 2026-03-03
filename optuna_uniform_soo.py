@@ -28,6 +28,45 @@ MAX_CW_SIZE = 200
 seen_points = set()
 reward_terms = {}
 
+# --- Processing delay from BO-URLLC document ---#
+
+SLOT_US = 125.0  # slot duration in microseconds
+A = 0.0501
+B = -0.0926
+C = 17.652
+
+# reference rate R = 9/10  -> k_ref=9, total_ref=10, n_ref=1 (redundancy)
+K_REF = 9
+TOTAL_REF = 10
+N_REF = TOTAL_REF - K_REF  # = 1
+
+
+def processing_delay_slots(code_rate, coding_depth):
+    """
+    Processing delay per source packet in slots.
+    f(w) = 0.0501 w^2 - 0.0926 w + 17.652
+    scaled for arbitrary code rate.
+    """
+
+    k = code_rate[0]
+    total = code_rate[1]
+    n = total - k  # redundancy
+
+    # window size proxy (as in document)
+    w = coding_depth * k
+
+    # processing time per coded packet (microseconds)
+    d_us = A * (w ** 2) + B * w + C
+
+    # scaling factor: d' = d * (n'k) / (nk')
+    scale = (n * K_REF) / (N_REF * k)
+
+    d_us_scaled = d_us * scale
+
+    # convert to slots
+    return d_us_scaled / SLOT_US
+
+
 def run_simulation(r, d, extraparams):
     # A complete PyErasure simulation - the objective function
     code_rate = r
@@ -76,7 +115,7 @@ def run_simulation(r, d, extraparams):
 
         decoder.update_timestamps(index, elapsed_timeslots)
 
-        if rng_loss.uniform(0,1) >= ploss: 
+        if rng_loss.uniform(0,1) >= ploss:
             decoder.current_timeslot = elapsed_timeslots
             decoder.decode_systematic_packet(packet, index)
         packets_sent += 1
@@ -85,13 +124,13 @@ def run_simulation(r, d, extraparams):
         if source_packet_counter % encoder.source_per_cycle == 0:
             for r in range(encoder.repair_per_cycle):
                 #assert packets_sent != 0 #should never enter here if 0 coefficients are to be generated
-                
+
                 coefficients = generator.generate_partial(encoder.calculate_num_coefficients())
                 packet = encoder.encode_packet(coefficients)
                 repair_packets += 1
                 elapsed_timeslots += 1
-                
-                if rng_loss.uniform(0,1) >= ploss: 
+
+                if rng_loss.uniform(0,1) >= ploss:
                     decoder.current_timeslot = elapsed_timeslots
                     decoder.decode_packet(packet, bytearray(coefficients), (encoder.coding_window_start, encoder.coding_window_end-1))
     repair_at_the_end = math.ceil((num_packets*source_plus_repair / source_per_cycle) - num_packets - (math.floor(num_packets/source_per_cycle)*repair_per_cycle))
@@ -102,40 +141,31 @@ def run_simulation(r, d, extraparams):
         packet = encoder.encode_packet(coefficients)
         repair_packets += 1
         elapsed_timeslots += 1
-        if rng_loss.uniform(0,1) >= ploss: 
+        if rng_loss.uniform(0,1) >= ploss:
             decoder.current_timeslot = elapsed_timeslots
             decoder.decode_packet(packet, bytearray(coefficients), (encoder.coding_window_start, encoder.coding_window_end-1))
 
     decoder.current_timeslot = elapsed_timeslots
-    decoder.sum_delay_of_last()    
+    decoder.sum_delay_of_last()
     # end = time.time()
 
-    assert packets_sent == transmitted_packets 
+    assert packets_sent == transmitted_packets
 
     delivery_ratio = decoder.delivered_packets / transmitted_packets if transmitted_packets else 0.0
     average_inorder_delay = (decoder.sum_of_delay / decoder.delivered_packets) if decoder.delivered_packets else float("inf")
 
-    #neo g (D, DRT)
-    if average_inorder_delay <= D and delivery_ratio >= DRT:
-        reward_score = (D - average_inorder_delay)/ D + delivery_ratio
+        #total delay
+    proc_delay = processing_delay_slots(code_rate, coding_depth)
+    total_delay = average_inorder_delay + proc_delay
+
+    # new symmetric reward
+    if total_delay <= D and delivery_ratio >= DRT:
+        reward_score = (D - total_delay) / D + (delivery_ratio - DRT) / (1.0 - DRT)
     else:
-        reward_score = 0.0 
-    #minr = StateVectorUtils.min_code_rate()
-    #r_min = minr[0]/minr[1]
-    #maxr = StateVectorUtils.max_code_rate()
-    #r_max = maxr[0]/maxr[1]
-    #r = code_rate[0]/code_rate[1]
-    #r_term = (r_max - r)/(r_max - r_min)
-    #w_min = StateVectorUtils.min_cw_size()
-   # w_term = (coding_window_size - w_min)/(MAX_CW_SIZE - w_min)
-   # match reward_func:
-    #    case "linear":
-     #       reward_score = delivery_ratio - code_rate_weight*r_term - window_weight*w_term
-     #   case "nonlinear":
-     #       reward_score = delivery_ratio - code_rate_weight*math.pow(r_term, 2) - window_weight*math.pow(w_term, 2)
-    
-    #output = [reward_score, delivery_ratio, r_term + w_term]
-    output = [reward_score, delivery_ratio, average_inorder_delay] # dn mas endiaferei to complexity alla to delay 
+        reward_score = 0.0
+
+    output = [reward_score, delivery_ratio, total_delay]
+
     return output
 
 def objective_function(trial: optuna.Trial, extra_input, num_iterations):
@@ -165,15 +195,12 @@ def objective_function(trial: optuna.Trial, extra_input, num_iterations):
 
     scores = [el[0] for el in outputs]
     delivery_ratios = [el[1] for el in outputs]
-    #complexity = outputs[0][2]
-    #if (rate, d) not in reward_terms:
-    #    reward_terms[(rate, d)] = (np.mean(delivery_ratios), complexity)
     avg_delay = np.mean([el[2] for el in outputs])
     if (rate, d) not in reward_terms:
         reward_terms[(rate, d)] = (np.mean(delivery_ratios), avg_delay)
 
     avg_score = np.mean(scores)
-    return avg_score 
+    return avg_score
 
 def custom_gamma(x: int, gamma: float) -> int:
     return min(int(np.ceil(gamma * x)), 25)
@@ -185,8 +212,8 @@ def main():
     # Simulation related arguments
     parser.add_argument("--num_packets", default = 1000, required = False, help="Total number of source packets transmitted per trial")
     parser.add_argument("--code_rate_weight", default = 0.2, required = False, help="Weight indicating the impact of R on the reward function")
-    parser.add_argument("--window_weight", default = 0.2, required = False, help="Weight indicating the impact of CW size on the reward function")    
-     
+    parser.add_argument("--window_weight", default = 0.2, required = False, help="Weight indicating the impact of CW size on the reward function")
+
     # Simulation-specific arguments
     parser.add_argument("--packet_size", default = 100, required = False, help="Packet size in bytes")
     parser.add_argument("--seed", default = 5, required = False, help="Seed to control randomness and reproducibility")
@@ -225,13 +252,13 @@ def main():
     num_iterations = int(args.iterations)
     if estimator == "TPE":
         gamma = float(args.gamma)
-    
+
     # Initialize available coding depth values per code rate
     if args.state_space == "short":
         StateVectorUtils.initialize_state_space_short()
     else:
         StateVectorUtils.initialize_state_space_full()
-    
+
     print(f"Optuna Training using PyErasure\n---------------------------------------")
     print(f"Number of Trials: \t\t{num_trials}\n"
           f"Number of Packets/Trial: \t{num_packets}\n"
@@ -253,7 +280,7 @@ def main():
     if not os.path.exists(path):
         os.makedirs(path)
 
-    StateVectorUtils.valid_rates = [r for r in StateVectorUtils.get_code_rates() if r[0]/r[1] <= 1-ploss]   
+    StateVectorUtils.valid_rates = [r for r in StateVectorUtils.get_code_rates() if r[0]/r[1] <= 1-ploss]
     params = [field, num_packets, packet_size, ploss, code_rate_weight, window_weight, args.func, D, DRT] # list with arguments needed from a PyErasure simulation
     obj_func = partial(objective_function, extra_input=params, num_iterations=num_iterations)
 
@@ -261,12 +288,13 @@ def main():
     if estimator == "Random":
         study = optuna.create_study(direction="maximize", sampler=optuna.samplers.RandomSampler(seed=seed))
     else:
-        gamma_func = partial(custom_gamma, gamma=gamma) 
+        gamma_func = partial(custom_gamma, gamma=gamma)
         study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=seed, n_startup_trials=random_evaluations, gamma=gamma_func))
-    
+
     # print(StateVectorUtils.valid_rates)
     study.optimize(obj_func, n_trials=num_trials)
     end = time.time()
+
 
     results_filename = path + "/ploss" + str(ploss) + "_pkts" + str(num_packets) + random_txt + "_" + args.state_space + "_" + estimator + "_rw" + str(code_rate_weight) + "_ww" + str(window_weight) + "_results.txt"
     with open(results_filename, 'a', encoding='UTF8') as f:
@@ -282,10 +310,32 @@ def main():
         f"- D={D} - DRT={DRT} - ploss={ploss} - state_space={args.state_space} "
         f"- Best (R,d)=({best_r[0]}/{best_r[1]}, {d}) "
         f"- Score={study.best_value:.6f} "
-        f"- DR={best_avg_terms[0]:.6f} - AvgDelay={best_avg_terms[1]:.6f} "
+        f"- DR={best_avg_terms[0]:.6f} - TotalDelay={best_avg_terms[1]:.6f} "
         f"- Time={end-start:.2f}s - UniquePoints={len(seen_points)}\n"
     )
 
+    # -------------------------
+    summary_file = os.path.join(path, "optuna_summary.tsv")
+
+    header = (
+        "model\tEstimator\tn_calls\tploss\tStateSpace\tSeed\tD\tDRT\tBest R\tBest D\t"
+        "Best Score g\tAvg delivery ratio\ttotal delay\truntime (sec)\n"
+    )
+
+    runtime_sec = float(end - start)
+    row = (
+        f"optuna\t{estimator}\t{num_trials}\t{ploss}\t{args.state_space}\t{seed}\t{D}\t{DRT}\t"
+        f"{best_r[0]}/{best_r[1]}\t{d}\t{study.best_value:.6f}\t"
+        f"{best_avg_terms[0]:.6f}\t{best_avg_terms[1]:.6f}\t{runtime_sec:.2f}\n"
+    )
+
+    write_header = (not os.path.exists(summary_file)) or (os.path.getsize(summary_file) == 0)
+    with open(summary_file, "a", encoding="utf-8") as f:
+        if write_header:
+            f.write(header)
+        f.write(row)
+
+    print(f"\nSaved summary row to: {summary_file}")
 
 if __name__ == "__main__":
     main()
