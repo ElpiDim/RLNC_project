@@ -41,30 +41,56 @@ TOTAL_REF = 10
 N_REF = TOTAL_REF - K_REF  # = 1
 
 
+#def processing_delay_slots(code_rate, coding_depth):
+#    """
+#    Processing delay per source packet in slots.
+#    f(w) = 0.0501 w^2 - 0.0926 w + 17.652
+#    scaled for arbitrary code rate.
+#    """
+
+#   k = code_rate[0]
+#  total = code_rate[1]
+# n = total - k  # redundancy
+
+# window size proxy (as in document)
+#w = coding_depth * k
+
+    # processing time per coded packet (microseconds)
+   #d_us = A * (w ** 2) + B * w + C
+
+    # scaling factor: d' = d * (n'k) / (nk')
+    #scale = (n * K_REF) / (N_REF * k)
+
+    #d_us_scaled = d_us * scale
+
+    # convert to slots
+    #return d_us_scaled / SLOT_US
+
 def processing_delay_slots(code_rate, coding_depth):
     """
     Processing delay per source packet in slots.
-    f(w) = 0.0501 w^2 - 0.0926 w + 17.652
-    scaled for arbitrary code rate.
+
+    Old model for ploss = 5%:
+    f_5%(R,w) = 0.0001 w^2 + 0.0168 R^(-0.743) w + 0.2968 - 0.1994 R
+
+    New model for ploss = 20%:
+    f_20%(R,w) = 0.0006 w^2 + 0.08 w + 0.0972 R^(-0.819)
+
+    where R = k / total and w = coding_depth * k
     """
 
     k = code_rate[0]
     total = code_rate[1]
-    n = total - k  # redundancy
-
-    # window size proxy (as in document)
+    R = k / total
     w = coding_depth * k
 
-    # processing time per coded packet (microseconds)
-    d_us = A * (w ** 2) + B * w + C
+    # old processing delay model for ploss = 5%
+    # d_us = 0.0001 * (w ** 2) + 0.0168 * (R ** (-0.743)) * w + 0.2968 - 0.1994 * R
 
-    # scaling factor: d' = d * (n'k) / (nk')
-    scale = (n * K_REF) / (N_REF * k)
+    # new processing delay model for ploss = 20%
+    d_us = 0.0006 * (w ** 2) + 0.08 * w + 0.0972 * (R ** (-0.819))
 
-    d_us_scaled = d_us * scale
-
-    # convert to slots
-    return d_us_scaled / SLOT_US
+    return d_us / SLOT_US
 
 
 def run_simulation(r, d, extraparams):
@@ -158,12 +184,20 @@ def run_simulation(r, d, extraparams):
     proc_delay = processing_delay_slots(code_rate, coding_depth)
     total_delay = average_inorder_delay + proc_delay
 
-    # new symmetric reward
+      # old reward function
+    # if total_delay <= D and delivery_ratio >= DRT:
+    #     reward_score = (D - total_delay) / D + (delivery_ratio - DRT) / (1.0 - DRT)
+    # else:
+    #     reward_score = 0.0
+
+    # new reward function g2:
+    # same as the original one, but the Delivery Ratio term is multiplied by code rate R = k / n
+    R = code_rate[0] / code_rate[1]
+
     if total_delay <= D and delivery_ratio >= DRT:
-        reward_score = (D - total_delay) / D + (delivery_ratio - DRT) / (1.0 - DRT)
+        reward_score = (D - total_delay) / D + R * ((delivery_ratio - DRT) / (1.0 - DRT))
     else:
         reward_score = 0.0
-
     output = [reward_score, delivery_ratio, total_delay]
 
     return output
